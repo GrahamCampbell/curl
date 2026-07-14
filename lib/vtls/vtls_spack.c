@@ -245,6 +245,8 @@ CURLcode Curl_ssl_session_unpack(struct Curl_easy *data,
   uint32_t val32;
   uint64_t val64;
   size_t dlen;
+  bool ietf_id_set = FALSE;
+  bool valid_until_set = FALSE;
   CURLcode result;
 
   DEBUGASSERT(buf);
@@ -288,6 +290,7 @@ CURLcode Curl_ssl_session_unpack(struct Curl_easy *data,
       if(result)
         goto out;
       s->ietf_tls_id = val16;
+      ietf_id_set = TRUE;
       break;
     case CURL_SPACK_QUICTP: {
       result = spack_decdata16(&pval8, &dlen, &buf, end);
@@ -311,7 +314,12 @@ CURLcode Curl_ssl_session_unpack(struct Curl_easy *data,
       result = spack_dec64(&val64, &buf, end);
       if(result)
         goto out;
+      if(val64 > (uint64_t)CURL_OFF_T_MAX) {
+        result = CURLE_READ_ERROR;
+        goto out;
+      }
       s->valid_until = (curl_off_t)val64;
+      valid_until_set = TRUE;
       break;
     case CURL_SPACK_SECTRUST:
       s->sectrust_verified = TRUE;
@@ -321,6 +329,9 @@ CURLcode Curl_ssl_session_unpack(struct Curl_easy *data,
       goto out;
     }
   }
+
+  if(!s->sdata || !s->sdata_len || !ietf_id_set || !valid_until_set)
+    result = CURLE_READ_ERROR;
 
 out:
   if(result) {

@@ -44,6 +44,8 @@ Import of session tickets from other curl versions may fail due to changes
 in the handling of **shmac** or **sdata**. A session ticket which has
 already expired is silently discarded.
 
+Malformed or incomplete session data is rejected with **CURLE_READ_ERROR**.
+
 # %PROTOCOLS%
 
 # EXAMPLE
