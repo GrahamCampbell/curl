@@ -58,6 +58,13 @@ static const uint8_t t1678_empty_ticket[] = {
   0x03, 0, 0, 0, 0, 0, 0, 0, 0 /* unknown expiry */
 };
 
+static const uint8_t t1678_expired[] = {
+  0x01,                         /* format version */
+  0x04, 0, 1, 'E',              /* ticket */
+  0x02, 0x03, 0x03,             /* TLSv1.2 */
+  0x03, 0, 0, 0, 0, 0, 0, 0, 1 /* expired at 1970-01-01 00:00:01 */
+};
+
 struct t1678_export_ctx {
   size_t count;
 };
@@ -174,10 +181,10 @@ static CURLcode t1678_export(CURL *easy, void *userptr,
   (void)easy;
   (void)alpn;
   (void)earlydata_max;
-  (void)valid_until;
 
   if(!session_key || strcmp(session_key, T1678_PEER_KEY) ||
-     !shmac || !shmac_len || !sdata || !sdata_len || ietf_tls_id != 0x0304) {
+     !shmac || !shmac_len || !sdata || !sdata_len || valid_until <= 0 ||
+     ietf_tls_id != 0x0304) {
     curl_mfprintf(stderr, "invalid exported session\n");
     return CURLE_FAILED_INIT;
   }
@@ -255,6 +262,13 @@ static CURLcode test_lib1678(const char *URL)
                                  "empty ticket");
   if(result)
     goto test_cleanup;
+
+  result = t1678_import(easy, t1678_expired, sizeof(t1678_expired));
+  if(result) {
+    curl_mfprintf(stderr, "expired packet was not discarded: %d (%s)\n",
+                  (int)result, curl_easy_strerror(result));
+    goto test_cleanup;
+  }
 
   result = curl_easy_ssls_export(easy, t1678_export, &export_ctx);
   if(result)

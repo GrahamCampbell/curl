@@ -875,22 +875,11 @@ static void cf_scache_peer_add_session(struct Curl_ssl_scache_peer *peer,
   }
 }
 
-static CURLcode cf_scache_add_session(struct Curl_cfilter *cf,
-                                      struct Curl_easy *data,
-                                      struct Curl_ssl_scache *scache,
-                                      const char *ssl_peer_key,
-                                      struct Curl_ssl_session *s)
+static bool cf_scache_session_prepare(struct Curl_ssl_scache *scache,
+                                      struct Curl_ssl_session *s,
+                                      curl_off_t now)
 {
-  struct Curl_ssl_scache_peer *peer = NULL;
-  struct ssl_primary_config *conn_config = Curl_ssl_cf_get_primary_config(cf);
-  CURLcode result = CURLE_OUT_OF_MEMORY;
-  curl_off_t now = (curl_off_t)time(NULL);
   curl_off_t max_lifetime;
-
-  if(!scache || !scache->peer_count) {
-    Curl_ssl_session_destroy(s);
-    return CURLE_OK;
-  }
 
   if(s->valid_until <= 0)
     s->valid_until = now + scache->default_lifetime_secs;
@@ -901,7 +890,26 @@ static CURLcode cf_scache_add_session(struct Curl_cfilter *cf,
   if(s->valid_until > (now + max_lifetime))
     s->valid_until = now + max_lifetime;
 
-  if(cf_scache_session_expired(s, now)) {
+  return !cf_scache_session_expired(s, now);
+}
+
+static CURLcode cf_scache_add_session(struct Curl_cfilter *cf,
+                                      struct Curl_easy *data,
+                                      struct Curl_ssl_scache *scache,
+                                      const char *ssl_peer_key,
+                                      struct Curl_ssl_session *s)
+{
+  struct Curl_ssl_scache_peer *peer = NULL;
+  struct ssl_primary_config *conn_config = Curl_ssl_cf_get_primary_config(cf);
+  CURLcode result = CURLE_OUT_OF_MEMORY;
+  curl_off_t now = (curl_off_t)time(NULL);
+
+  if(!scache || !scache->peer_count) {
+    Curl_ssl_session_destroy(s);
+    return CURLE_OK;
+  }
+
+  if(!cf_scache_session_prepare(scache, s, now)) {
     CURL_TRC_SSLS(data, "add, session already expired");
     Curl_ssl_session_destroy(s);
     return CURLE_OK;
@@ -1179,6 +1187,7 @@ CURLcode Curl_ssl_session_import(struct Curl_easy *data,
   struct Curl_ssl_scache *scache = cf_ssl_scache_get(data);
   struct Curl_ssl_scache_peer *peer = NULL;
   struct Curl_ssl_session *s = NULL;
+  curl_off_t now;
   CURLcode result;
 
   if(!scache) {
@@ -1193,6 +1202,13 @@ CURLcode Curl_ssl_session_import(struct Curl_easy *data,
   result = Curl_ssl_session_unpack(data, sdata, sdata_len, &s);
   if(result)
     goto out;
+
+  now = (curl_off_t)time(NULL);
+  if(!cf_scache_session_prepare(scache, s, now)) {
+    CURL_TRC_SSLS(data, "import, session already expired");
+    result = CURLE_OK;
+    goto out;
+  }
 
   Curl_ssl_scache_lock(data);
 
@@ -1226,7 +1242,7 @@ CURLcode Curl_ssl_session_import(struct Curl_easy *data,
   }
 
   if(peer) {
-    cf_scache_peer_add_session(peer, s, time(NULL));
+    cf_scache_peer_add_session(peer, s, now);
     s = NULL; /* peer is now owner */
     CURL_TRC_SSLS(data, "successfully imported ticket for peer %s, now "
                   "with %zu tickets",
